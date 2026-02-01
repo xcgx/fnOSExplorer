@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- 顶部操作栏 -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h4 class="mb-1">📁 文件浏览器</h4>
+                    <small class="text-muted">目标: <code>{{ target.ip }}:{{ target.port }}</code></small>
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="/" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> 返回列表
+                    </a>
+                    <a href="/download_folder/{{ target.id }}?path={{ current_path }}" class="btn btn-success">
+                        <i class="bi bi-download"></i> 打包下载
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 面包屑导航 -->
+    <nav aria-label="breadcrumb" class="mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <ol class="breadcrumb bg-white p-3 rounded shadow-sm mb-0 flex-grow-1">
+                <li class="breadcrumb-item">
+                    <a href="/explore/{{ target.id }}?path=/" class="text-decoration-none">
+                        <i class="bi bi-house-door"></i> Root
+                    </a>
+                </li>
+                {% for crumb in breadcrumbs %}
+                <li class="breadcrumb-item">
+                    <a href="/explore/{{ target.id }}?path={{ crumb.path }}" class="text-decoration-none">
+                        {{ crumb.name }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ol>
+            
+            <!-- WebDAV 快捷跳转按钮 -->
+            {% if webdav_shortcuts and webdav_shortcuts|length > 0 %}
+            <div class="ms-3">
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-warning dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-folder-symlink"></i> WebDAV 快捷跳转
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        {% for shortcut in webdav_shortcuts %}
+                        <li>
+                            <a class="dropdown-item" href="/explore/{{ target.id }}?path={{ shortcut.path }}">
+                                <i class="bi bi-folder"></i> 用户 {{ shortcut.user_id }}
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <!-- 文件列表 -->
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="list-group list-group-flush">
+                {% if items|length == 0 %}
+                <div class="list-group-item text-center text-muted py-5">
+                    <i class="bi bi-folder-x fs-1"></i>
+                    <p class="mt-2">此目录为空</p>
+                </div>
+                {% endif %}
+                
+                {% for item in items %}
+                <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-3">
+                    <div class="d-flex align-items-center">
+                        {% if item.is_dir %}
+                            <span class="fs-4 me-3">📁</span>
+                            <a href="/explore/{{ target.id }}?path={{ current_path.rstrip('/') }}/{{ item.href.rstrip('/') }}" 
+                               class="text-decoration-none text-dark fw-bold">
+                                {{ item.name.rstrip('/') }}
+                            </a>
+                        {% else %}
+                            <span class="fs-4 me-3">{{ get_file_icon(item.name) }}</span>
+                            <a href="javascript:void(0)" 
+                               onclick="previewFile('{{ target.id }}', '{{ current_path.rstrip('/') }}/{{ item.href }}', '{{ item.name }}')"
+                               class="text-decoration-none text-secondary">
+                                {{ item.name }}
+                            </a>
+                        {% endif %}
+                    </div>
+
+                    {% if not item.is_dir %}
+                    <div class="d-flex gap-2">
+                        <a href="/explore/{{ target.id }}?path={{ current_path.rstrip('/') }}/{{ item.href }}&action=view" 
+                           target="_blank"
+                           class="btn btn-sm btn-outline-secondary"
+                           title="在新窗口打开">
+                            <i class="bi bi-box-arrow-up-right"></i> 新窗口
+                        </a>
+                        <button onclick="previewFile('{{ target.id }}', '{{ current_path.rstrip('/') }}/{{ item.href }}', '{{ item.name }}')" 
+                                class="btn btn-sm btn-outline-info">
+                            <i class="bi bi-eye"></i> 预览
+                        </button>
+                        <a href="/explore/{{ target.id }}?path={{ current_path.rstrip('/') }}/{{ item.href }}&action=download" 
+                           class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-download"></i> 下载
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 预览模态框 -->
+<div class="modal fade" id="previewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="previewModalTitle">文件预览</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="previewModalBody">
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-3">正在加载...</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <a id="downloadBtn" href="#" class="btn btn-primary">
+                    <i class="bi bi-download"></i> 下载文件
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.list-group-item-action:hover {
+    background-color: #f8f9fa;
+}
+
+#previewModalBody {
+    max-height: 70vh;
+    overflow: auto;
+}
+
+#previewModalBody img {
+    max-width: 100%;
+    height: auto;
+}
+
+#previewModalBody pre {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 5px;
+    max-height: 600px;
+    overflow: auto;
+}
+
+#previewModalBody code {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+}
+</style>
+
+<script>
+let previewModal = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Initializing preview modal...');
+    const modalElement = document.getElementById('previewModal');
+    if (modalElement) {
+        previewModal = new bootstrap.Modal(modalElement);
+        console.log('Preview modal initialized successfully');
+    } else {
+        console.error('Preview modal element not found!');
+    }
+});
+
+function getFileExtension(filename) {
+    return filename.split('.').pop().toLowerCase();
+}
+
+function isImageFile(filename) {
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+    return imageExts.includes(getFileExtension(filename));
+}
+
+function isTextFile(filename) {
+    const textExts = ['txt', 'log', 'md', 'json', 'xml', 'html', 'css', 'js', 'py', 'java', 'c', 'cpp', 'h', 'sh', 'yml', 'yaml', 'ini', 'conf', 'cfg'];
+    return textExts.includes(getFileExtension(filename));
+}
+
+async function previewFile(targetId, filePath, filename) {
+    console.log('Preview file:', targetId, filePath, filename);
+    
+    if (!previewModal) {
+        console.error('Preview modal not initialized!');
+        alert('预览功能初始化失败，请刷新页面重试');
+        return;
+    }
+    
+    const modalTitle = document.getElementById('previewModalTitle');
+    const modalBody = document.getElementById('previewModalBody');
+    const downloadBtn = document.getElementById('downloadBtn');
+    
+    // 设置标题和下载链接
+    modalTitle.textContent = filename;
+    downloadBtn.href = `/explore/${targetId}?path=${filePath}&action=download`;
+    
+    // 显示加载状态
+    modalBody.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-3">正在加载...</p>
+        </div>
+    `;
+    
+    previewModal.show();
+    
+    try {
+        const viewUrl = `/explore/${targetId}?path=${filePath}&action=view`;
+        console.log('Fetching:', viewUrl);
+        
+        if (isImageFile(filename)) {
+            // 图片预览
+            modalBody.innerHTML = `
+                <div class="text-center">
+                    <img src="${viewUrl}" alt="${filename}" class="img-fluid" onerror="this.parentElement.innerHTML='<div class=\\'alert alert-danger\\'>图片加载失败</div>'">
+                </div>
+            `;
+        } else if (isTextFile(filename)) {
+            // 文本文件预览
+            const response = await fetch(viewUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const text = await response.text();
+            
+            // 限制显示大小
+            const maxLength = 50000;
+            const displayText = text.length > maxLength ? text.substring(0, maxLength) + '\n\n... (文件过大，仅显示前50000字符)' : text;
+            
+            modalBody.innerHTML = `
+                <pre><code>${escapeHtml(displayText)}</code></pre>
+            `;
+        } else {
+            // 不支持预览的文件类型
+            modalBody.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="bi bi-file-earmark-x fs-1 text-muted"></i>
+                    <p class="mt-3">此文件类型不支持预览</p>
+                    <p class="text-muted">文件类型: ${getFileExtension(filename)}</p>
+                    <p class="text-muted">请点击下载按钮下载文件</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Preview error:', error);
+        modalBody.innerHTML = `
+            <div class="alert alert-danger" role="alert">
+                <i class="bi bi-exclamation-triangle"></i> 加载失败: ${error.message}
+            </div>
+        `;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

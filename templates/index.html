@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- 导入区域 -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">📂 导入资产 CSV</h5>
+        </div>
+        <div class="card-body">
+            <!-- 单文件上传 -->
+            <form action="/import" method="post" enctype="multipart/form-data" class="mb-3">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-8">
+                        <label class="form-label">选择文件</label>
+                        <input type="file" name="file" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary w-100">单文件扫描</button>
+                    </div>
+                </div>
+            </form>
+            
+            <!-- 批量操作按钮 -->
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+                <button onclick="importAllCSV()" class="btn btn-success">
+                    <i class="bi bi-download"></i> 一键导入所有 CSV
+                </button>
+                <button onclick="showScanConfig()" class="btn btn-warning">
+                    <i class="bi bi-search"></i> 开始检查可用性
+                </button>
+                <div class="ms-3">
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle"></i> 当前线程数: <span id="currentThreads">32</span>
+                    </small>
+                </div>
+            </div>
+            
+            <small class="text-muted d-block mt-3">
+                <strong>格式要求：</strong> host, ip, port, protocol, country, region, city (支持逗号或 Tab 分隔)<br>
+                <strong>批量导入：</strong> 将 CSV 文件放入项目根目录的 <code>csv_imports</code> 文件夹
+            </small>
+            
+            <div id="message" class="mt-3"></div>
+        </div>
+    </div>
+
+    <!-- 状态统计 -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row text-center" id="stats-container">
+                <div class="col">
+                    <h3 class="mb-0" id="stat-all">{{ status_counts.get('all', 0) }}</h3>
+                    <small class="text-muted">全部</small>
+                </div>
+                <div class="col">
+                    <h3 class="mb-0 text-danger" id="stat-vulnerable">{{ status_counts.get('Vulnerable', 0) }}</h3>
+                    <small class="text-muted">漏洞</small>
+                </div>
+                <div class="col">
+                    <h3 class="mb-0 text-success" id="stat-safe">{{ status_counts.get('Safe', 0) }}</h3>
+                    <small class="text-muted">安全</small>
+                </div>
+                <div class="col">
+                    <h3 class="mb-0 text-warning" id="stat-pending">{{ status_counts.get('Pending', 0) }}</h3>
+                    <small class="text-muted">待检查</small>
+                </div>
+                <div class="col">
+                    <h3 class="mb-0 text-dark" id="stat-error">{{ status_counts.get('Error', 0) }}</h3>
+                    <small class="text-muted">错误</small>
+                </div>
+            </div>
+            <div class="text-center mt-2">
+                <small class="text-muted">
+                    <span id="last-update">刚刚更新</span> | 
+                    <span class="text-primary" style="cursor: pointer;" onclick="updateStats()">立即刷新</span>
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <!-- 筛选和搜索 -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="get" action="/" class="row g-2 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label">状态筛选</label>
+                    <select name="status" class="form-select" onchange="this.form.submit()">
+                        <option value="all" {{ 'selected' if current_status == 'all' else '' }}>全部</option>
+                        <option value="Vulnerable" {{ 'selected' if current_status == 'Vulnerable' else '' }}>漏洞</option>
+                        <option value="Safe" {{ 'selected' if current_status == 'Safe' else '' }}>安全</option>
+                        <option value="Pending" {{ 'selected' if current_status == 'Pending' else '' }}>待检查</option>
+                        <option value="Error" {{ 'selected' if current_status == 'Error' else '' }}>错误</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">搜索 (IP/Host/City)</label>
+                    <input type="text" name="search" class="form-control" placeholder="输入 IP、域名或城市" value="{{ search_query }}">
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i> 搜索
+                    </button>
+                </div>
+                <div class="col-md-2">
+                    <a href="/" class="btn btn-success w-100" title="刷新列表">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 60px;">ID</th>
+                            <th style="width: 60px;">国家</th>
+                            <th style="width: 150px;">地区</th>
+                            <th style="width: 80px;">协议</th>
+                            <th style="width: 150px;">IP</th>
+                            <th style="width: 80px;">端口</th>
+                            <th style="width: 100px;">状态</th>
+                            <th style="width: 120px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in targets %}
+                        <tr>
+                            <td>{{ t.id }}</td>
+                            <td class="text-center">
+                                {% if t.country and t.country.strip() %}
+                                    {% set country_code = t.country.strip().upper() %}
+                                    <div class="fs-4">
+                                        {% if country_code == 'CN' %}
+                                            🇨🇳
+                                        {% elif country_code == 'US' %}
+                                            🇺🇸
+                                        {% elif country_code == 'JP' %}
+                                            🇯🇵
+                                        {% elif country_code == 'KR' %}
+                                            🇰🇷
+                                        {% elif country_code == 'GB' %}
+                                            🇬🇧
+                                        {% elif country_code == 'DE' %}
+                                            🇩🇪
+                                        {% elif country_code == 'FR' %}
+                                            🇫🇷
+                                        {% elif country_code == 'SG' %}
+                                            🇸🇬
+                                        {% elif country_code == 'HK' %}
+                                            🇭🇰
+                                        {% elif country_code == 'TW' %}
+                                            🇹🇼
+                                        {% elif country_code == 'CA' %}
+                                            🇨🇦
+                                        {% elif country_code == 'AU' %}
+                                            🇦🇺
+                                        {% elif country_code == 'IN' %}
+                                            🇮🇳
+                                        {% elif country_code == 'BR' %}
+                                            🇧🇷
+                                        {% elif country_code == 'RU' %}
+                                            🇷🇺
+                                        {% elif country_code|length == 2 %}
+                                            {{ get_flag_emoji(country_code) }}
+                                        {% else %}
+                                            🏳️
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted">{{ country_code }}</small>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div>{{ t.region if t.region else '-' }}</div>
+                                {% if t.city %}
+                                <small class="text-muted">{{ t.city }}</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if t.protocol == 'https' %}
+                                    <span class="badge bg-success">HTTPS</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">HTTP</span>
+                                {% endif %}
+                            </td>
+                            <td><code>{{ t.ip }}</code></td>
+                            <td><code>{{ t.port }}</code></td>
+                            <td>
+                                {% if t.status == 'Vulnerable' %}
+                                    <span class="badge bg-danger">漏洞</span>
+                                {% elif t.status == 'Safe' %}
+                                    <span class="badge bg-success">安全</span>
+                                {% elif t.status == 'Pending' %}
+                                    <span class="badge bg-warning text-dark">待检查</span>
+                                {% else %}
+                                    <span class="badge bg-dark">错误</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if t.status == 'Vulnerable' %}
+                                <a href="/explore/{{ t.id }}" class="btn btn-sm btn-danger">浏览文件</a>
+                                <a href="/explore/{{ t.id }}?path=/share/home/1000/webdav" class="btn btn-sm btn-warning" title="快速跳转到 WebDAV 目录">
+                                    <i class="bi bi-folder-symlink"></i> WebDAV
+                                </a>
+                                {% else %}
+                                <button class="btn btn-sm btn-secondary" disabled>不可达</button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- 分页 -->
+        {% if pagination.total_pages > 1 %}
+        <div class="card-footer">
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center mb-0">
+                    <li class="page-item {{ 'disabled' if pagination.page == 1 else '' }}">
+                        <a class="page-link" href="?page={{ pagination.page - 1 }}&status={{ current_status }}&search={{ search_query }}">上一页</a>
+                    </li>
+                    
+                    {% for p in range(1, pagination.total_pages + 1) %}
+                        {% if p == pagination.page %}
+                            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                        {% elif p == 1 or p == pagination.total_pages or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                            <li class="page-item"><a class="page-link" href="?page={{ p }}&status={{ current_status }}&search={{ search_query }}">{{ p }}</a></li>
+                        {% elif p == pagination.page - 3 or p == pagination.page + 3 %}
+                            <li class="page-item disabled"><span class="page-link">...</span></li>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    <li class="page-item {{ 'disabled' if pagination.page == pagination.total_pages else '' }}">
+                        <a class="page-link" href="?page={{ pagination.page + 1 }}&status={{ current_status }}&search={{ search_query }}">下一页</a>
+                    </li>
+                </ul>
+                <p class="text-center text-muted mt-2 mb-0">
+                    第 {{ pagination.page }} / {{ pagination.total_pages }} 页，共 {{ pagination.total }} 条记录
+                </p>
+            </nav>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 扫描配置模态框 -->
+<div class="modal fade" id="scanConfigModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">扫描配置</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="threadCount" class="form-label">
+                        并发线程数 <small class="text-muted">(1-100)</small>
+                    </label>
+                    <input type="number" class="form-control" id="threadCount" 
+                           value="32" min="1" max="100" step="1">
+                    <div class="form-text">
+                        线程数越多扫描越快，但会占用更多系统资源。建议值：16-64
+                    </div>
+                </div>
+                <div class="alert alert-info mb-0">
+                    <i class="bi bi-info-circle"></i> 
+                    <strong>提示：</strong>扫描期间统计数据会每 2 秒自动更新
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-warning" onclick="startScan()">
+                    <i class="bi bi-search"></i> 开始扫描
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let statsUpdateInterval = null;
+let lastUpdateTime = Date.now();
+let scanConfigModal = null;
+
+// 初始化模态框
+document.addEventListener('DOMContentLoaded', function() {
+    const modalElement = document.getElementById('scanConfigModal');
+    if (modalElement) {
+        scanConfigModal = new bootstrap.Modal(modalElement);
+    }
+    startAutoRefresh();
+});
+
+function showMessage(msg, type) {
+    const msgDiv = document.getElementById('message');
+    msgDiv.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
+        ${msg}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>`;
+}
+
+// 显示扫描配置对话框
+function showScanConfig() {
+    if (scanConfigModal) {
+        scanConfigModal.show();
+    }
+}
+
+// 开始扫描
+async function startScan() {
+    const threadCount = parseInt(document.getElementById('threadCount').value);
+    
+    // 验证线程数
+    if (isNaN(threadCount) || threadCount < 1 || threadCount > 100) {
+        alert('线程数必须在 1-100 之间');
+        return;
+    }
+    
+    // 保存线程数配置
+    document.getElementById('currentThreads').textContent = threadCount;
+    
+    // 关闭配置对话框
+    if (scanConfigModal) {
+        scanConfigModal.hide();
+    }
+    
+    showMessage(`正在使用 ${threadCount} 个线程扫描，请稍候...`, 'info');
+    
+    // 扫描期间更频繁地刷新统计（每2秒）
+    stopAutoRefresh();
+    const scanInterval = setInterval(updateStats, 2000);
+    
+    try {
+        const response = await fetch('/scan_pending', { 
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ max_workers: threadCount })
+        });
+        const result = await response.json();
+        
+        clearInterval(scanInterval);
+        startAutoRefresh();
+        
+        if (result.success) {
+            showMessage(result.message, 'success');
+            updateStats(); // 立即更新统计
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showMessage(result.message, 'warning');
+        }
+    } catch (error) {
+        clearInterval(scanInterval);
+        startAutoRefresh();
+        showMessage('扫描失败: ' + error.message, 'danger');
+    }
+}
+
+function showMessage(msg, type) {
+    const msgDiv = document.getElementById('message');
+    msgDiv.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
+        ${msg}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>`;
+}
+
+// 更新统计数据
+async function updateStats() {
+    try {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
+        
+        // 更新数字，添加动画效果
+        updateStatWithAnimation('stat-all', stats.all || 0);
+        updateStatWithAnimation('stat-vulnerable', stats.Vulnerable || 0);
+        updateStatWithAnimation('stat-safe', stats.Safe || 0);
+        updateStatWithAnimation('stat-pending', stats.Pending || 0);
+        updateStatWithAnimation('stat-error', stats.Error || 0);
+        
+        // 更新时间
+        lastUpdateTime = Date.now();
+        updateLastUpdateText();
+    } catch (error) {
+        console.error('更新统计失败:', error);
+    }
+}
+
+// 数字动画更新
+function updateStatWithAnimation(elementId, newValue) {
+    const element = document.getElementById(elementId);
+    const oldValue = parseInt(element.textContent) || 0;
+    
+    if (oldValue !== newValue) {
+        element.style.transition = 'transform 0.3s';
+        element.style.transform = 'scale(1.2)';
+        element.textContent = newValue;
+        
+        setTimeout(() => {
+            element.style.transform = 'scale(1)';
+        }, 300);
+    }
+}
+
+// 更新"最后更新"文本
+function updateLastUpdateText() {
+    const now = Date.now();
+    const diff = Math.floor((now - lastUpdateTime) / 1000);
+    const element = document.getElementById('last-update');
+    
+    if (diff < 10) {
+        element.textContent = '刚刚更新';
+    } else if (diff < 60) {
+        element.textContent = `${diff}秒前更新`;
+    } else {
+        const minutes = Math.floor(diff / 60);
+        element.textContent = `${minutes}分钟前更新`;
+    }
+}
+
+// 启动自动刷新
+function startAutoRefresh() {
+    // 每5秒更新一次统计数据
+    statsUpdateInterval = setInterval(updateStats, 5000);
+    
+    // 每秒更新一次"最后更新"文本
+    setInterval(updateLastUpdateText, 1000);
+}
+
+// 停止自动刷新
+function stopAutoRefresh() {
+    if (statsUpdateInterval) {
+        clearInterval(statsUpdateInterval);
+        statsUpdateInterval = null;
+    }
+}
+
+async function importAllCSV() {
+    try {
+        const response = await fetch('/import_all', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            showMessage(result.message, 'success');
+            updateStats(); // 立即更新统计
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showMessage(result.message, 'warning');
+        }
+    } catch (error) {
+        showMessage('导入失败: ' + error.message, 'danger');
+    }
+}
+
+// 页面加载时启动自动刷新
+// (已在 DOMContentLoaded 中调用)
+
+// 页面隐藏时停止刷新，显示时恢复
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        stopAutoRefresh();
+    } else {
+        updateStats(); // 立即更新一次
+        startAutoRefresh();
+    }
+});
+</script>
+{% endblock %}
